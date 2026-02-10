@@ -1,0 +1,1702 @@
+===========================================
+SMART ATTENDANCE SYSTEM - FULL PROJECT CODE
+===========================================
+
+===========================================
+PART 1: BACKEND (Laravel)
+===========================================
+
+-------------------------------------------
+FILE 1: backend/database/migrations/001_create_users_table.php
+-------------------------------------------
+
+<?php
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration {
+    public function up(): void {
+        Schema::create('users', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->string('email')->unique();
+            $table->string('password');
+            $table->enum('role', ['admin', 'doctor', 'student'])->default('student');
+            $table->string('student_code')->nullable()->unique();
+            $table->string('phone')->nullable();
+            $table->timestamps();
+        });
+    }
+    public function down(): void { Schema::dropIfExists('users'); }
+};
+
+-------------------------------------------
+FILE 2: backend/database/migrations/002_create_rooms_table.php
+-------------------------------------------
+
+<?php
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration {
+    public function up(): void {
+        Schema::create('rooms', function (Blueprint $table) {
+            $table->id();
+            $table->string('room_name');
+            $table->uuid('beacon_uuid');
+            $table->integer('beacon_major');
+            $table->integer('beacon_minor');
+            $table->timestamps();
+        });
+    }
+    public function down(): void { Schema::dropIfExists('rooms'); }
+};
+
+-------------------------------------------
+FILE 3: backend/database/migrations/003_create_courses_table.php
+-------------------------------------------
+
+<?php
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration {
+    public function up(): void {
+        Schema::create('courses', function (Blueprint $table) {
+            $table->id();
+            $table->string('course_name');
+            $table->string('course_code')->unique();
+            $table->foreignId('doctor_id')->constrained('users');
+            $table->foreignId('room_id')->constrained('rooms');
+            $table->timestamps();
+        });
+    }
+    public function down(): void { Schema::dropIfExists('courses'); }
+};
+
+-------------------------------------------
+FILE 4: backend/database/migrations/004_create_attendance_sessions_table.php
+-------------------------------------------
+
+<?php
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration {
+    public function up(): void {
+        Schema::create('attendance_sessions', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('course_id')->constrained('courses');
+            $table->date('session_date');
+            $table->time('start_time');
+            $table->time('end_time');
+            $table->boolean('is_active')->default(true);
+            $table->foreignId('created_by')->constrained('users');
+            $table->timestamps();
+        });
+    }
+    public function down(): void { Schema::dropIfExists('attendance_sessions'); }
+};
+
+-------------------------------------------
+FILE 5: backend/database/migrations/005_create_attendance_records_table.php
+-------------------------------------------
+
+<?php
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration {
+    public function up(): void {
+        Schema::create('attendance_records', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('session_id')->constrained('attendance_sessions');
+            $table->foreignId('student_id')->constrained('users');
+            $table->timestamp('check_in_time');
+            $table->string('verification_method')->default('beacon');
+            $table->integer('beacon_rssi')->nullable();
+            $table->enum('status', ['present', 'absent', 'late'])->default('present');
+            $table->timestamps();
+            $table->unique(['session_id', 'student_id']);
+        });
+    }
+    public function down(): void { Schema::dropIfExists('attendance_records'); }
+};
+
+-------------------------------------------
+FILE 6: backend/app/Models/User.php
+-------------------------------------------
+
+<?php
+namespace App\Models;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Foundation\Auth\User as Authenticatable;
+use Laravel\Sanctum\HasApiTokens;
+
+class User extends Authenticatable {
+    use HasApiTokens, HasFactory;
+    
+    protected $fillable = ['name', 'email', 'password', 'role', 'student_code', 'phone'];
+    protected $hidden = ['password'];
+    
+    public function coursesAsDoctor() {
+        return $this->hasMany(Course::class, 'doctor_id');
+    }
+    
+    public function attendanceRecords() {
+        return $this->hasMany(AttendanceRecord::class, 'student_id');
+    }
+}
+
+-------------------------------------------
+FILE 7: backend/app/Models/Room.php
+-------------------------------------------
+
+<?php
+namespace App\Models;
+use Illuminate\Database\Eloquent\Model;
+
+class Room extends Model {
+    protected $fillable = ['room_name', 'beacon_uuid', 'beacon_major', 'beacon_minor'];
+    
+    public function courses() {
+        return $this->hasMany(Course::class);
+    }
+}
+
+-------------------------------------------
+FILE 8: backend/app/Models/Course.php
+-------------------------------------------
+
+<?php
+namespace App\Models;
+use Illuminate\Database\Eloquent\Model;
+
+class Course extends Model {
+    protected $fillable = ['course_name', 'course_code', 'doctor_id', 'room_id'];
+    
+    public function doctor() {
+        return $this->belongsTo(User::class, 'doctor_id');
+    }
+    
+    public function room() {
+        return $this->belongsTo(Room::class);
+    }
+    
+    public function attendanceSessions() {
+        return $this->hasMany(AttendanceSession::class);
+    }
+}
+
+-------------------------------------------
+FILE 9: backend/app/Models/AttendanceSession.php
+-------------------------------------------
+
+<?php
+namespace App\Models;
+use Illuminate\Database\Eloquent\Model;
+
+class AttendanceSession extends Model {
+    protected $fillable = ['course_id', 'session_date', 'start_time', 'end_time', 'is_active', 'created_by'];
+    
+    public function course() {
+        return $this->belongsTo(Course::class);
+    }
+    
+    public function records() {
+        return $this->hasMany(AttendanceRecord::class, 'session_id');
+    }
+}
+
+-------------------------------------------
+FILE 10: backend/app/Models/AttendanceRecord.php
+-------------------------------------------
+
+<?php
+namespace App\Models;
+use Illuminate\Database\Eloquent\Model;
+
+class AttendanceRecord extends Model {
+    protected $fillable = ['session_id', 'student_id', 'check_in_time', 'verification_method', 'beacon_rssi', 'status'];
+    
+    public function student() {
+        return $this->belongsTo(User::class, 'student_id');
+    }
+    
+    public function session() {
+        return $this->belongsTo(AttendanceSession::class, 'session_id');
+    }
+}
+
+-------------------------------------------
+FILE 11: backend/app/Http/Controllers/Api/AuthController.php
+-------------------------------------------
+
+<?php
+namespace App\Http\Controllers\Api;
+use App\Http\Controllers\Controller;
+use App\Models\User;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\ValidationException;
+
+class AuthController extends Controller {
+    
+    public function login(Request $request) {
+        $request->validate([
+            'email' => 'required|email',
+            'password' => 'required',
+        ]);
+
+        $user = User::where('email', $request->email)->first();
+
+        if (!$user || !Hash::check($request->password, $user->password)) {
+            throw ValidationException::withMessages([
+                'email' => ['البيانات غير صحيحة'],
+            ]);
+        }
+
+        $token = $user->createToken('auth_token')->plainTextToken;
+
+        return response()->json([
+            'user' => $user,
+            'token' => $token,
+            'role' => $user->role
+        ]);
+    }
+
+    public function logout(Request $request) {
+        $request->user()->currentAccessToken()->delete();
+        return response()->json(['message' => 'تم تسجيل الخروج']);
+    }
+    
+    public function profile(Request $request) {
+        return response()->json($request->user());
+    }
+}
+
+-------------------------------------------
+FILE 12: backend/app/Http/Controllers/Api/StudentController.php
+-------------------------------------------
+
+<?php
+namespace App\Http\Controllers\Api;
+use App\Http\Controllers\Controller;
+use App\Models\AttendanceRecord;
+use App\Models\AttendanceSession;
+use App\Models\Room;
+use Illuminate\Http\Request;
+
+class StudentController extends Controller {
+    
+    public function getCourses(Request $request) {
+        $student = $request->user();
+        
+        $courses = \App\Models\Course::with(['doctor', 'room'])->get();
+        
+        $coursesWithAttendance = $courses->map(function($course) use ($student) {
+            $todaySession = AttendanceSession::where('course_id', $course->id)
+                ->where('session_date', today())
+                ->where('is_active', true)
+                ->first();
+                
+            $isPresent = false;
+            if ($todaySession) {
+                $isPresent = AttendanceRecord::where('session_id', $todaySession->id)
+                    ->where('student_id', $student->id)
+                    ->exists();
+            }
+            
+            return [
+                'id' => $course->id,
+                'course_name' => $course->course_name,
+                'course_code' => $course->course_code,
+                'doctor' => $course->doctor->name,
+                'room' => $course->room->room_name,
+                'has_active_session' => $todaySession ? true : false,
+                'is_present_today' => $isPresent,
+                'beacon_uuid' => $todaySession ? $course->room->beacon_uuid : null,
+            ];
+        });
+        
+        return response()->json($coursesWithAttendance);
+    }
+
+    public function checkIn(Request $request) {
+        $request->validate([
+            'beacon_uuid' => 'required|string',
+            'beacon_major' => 'required|integer',
+            'beacon_minor' => 'required|integer',
+            'rssi' => 'nullable|integer',
+            'course_id' => 'required|integer'
+        ]);
+
+        $student = $request->user();
+        
+        if ($student->role !== 'student') {
+            return response()->json(['error' => 'غير مصرح'], 403);
+        }
+
+        $room = Room::where('beacon_uuid', $request->beacon_uuid)
+            ->where('beacon_major', $request->beacon_major)
+            ->where('beacon_minor', $request->beacon_minor)
+            ->first();
+
+        if (!$room) {
+            return response()->json(['error' => 'Beacon غير مسجل'], 404);
+        }
+
+        $session = AttendanceSession::where('is_active', true)
+            ->where('course_id', $request->course_id)
+            ->where('session_date', today())
+            ->first();
+
+        if (!$session) {
+            return response()->json(['error' => 'لا يوجد جلسة حضور نشطة'], 404);
+        }
+
+        if ($request->rssi && $request->rssi < -85) {
+            return response()->json(['error' => 'أنت بعيد جداً عن القاعة'], 403);
+        }
+
+        $record = AttendanceRecord::updateOrCreate(
+            [
+                'session_id' => $session->id,
+                'student_id' => $student->id
+            ],
+            [
+                'check_in_time' => now(),
+                'verification_method' => 'beacon',
+                'beacon_rssi' => $request->rssi,
+                'status' => 'present'
+            ]
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'تم تسجيل الحضور بنجاح ✅',
+            'record' => $record,
+            'course' => $session->course->course_name,
+            'check_in_time' => $record->check_in_time->format('H:i:s')
+        ]);
+    }
+
+    public function getAttendanceHistory(Request $request) {
+        $student = $request->user();
+        
+        $records = AttendanceRecord::where('student_id', $student->id)
+            ->with(['session.course'])
+            ->orderBy('created_at', 'desc')
+            ->get()
+            ->map(function($record) {
+                return [
+                    'id' => $record->id,
+                    'course_name' => $record->session->course->course_name,
+                    'date' => $record->session->session_date,
+                    'time' => $record->check_in_time->format('H:i:s'),
+                    'status' => $record->status,
+                    'method' => $record->verification_method,
+                ];
+            });
+            
+        return response()->json($records);
+    }
+}
+
+-------------------------------------------
+FILE 13: backend/app/Http/Controllers/Api/DoctorController.php
+-------------------------------------------
+
+<?php
+namespace App\Http\Controllers\Api;
+use App\Http\Controllers\Controller;
+use App\Models\AttendanceSession;
+use App\Models\AttendanceRecord;
+use App\Models\Course;
+use Illuminate\Http\Request;
+
+class DoctorController extends Controller {
+    
+    public function getCourses(Request $request) {
+        $doctor = $request->user();
+        
+        $courses = Course::where('doctor_id', $doctor->id)
+            ->with(['room'])
+            ->get()
+            ->map(function($course) {
+                $activeSession = AttendanceSession::where('course_id', $course->id)
+                    ->where('is_active', true)
+                    ->where('session_date', today())
+                    ->first();
+                    
+                return [
+                    'id' => $course->id,
+                    'course_name' => $course->course_name,
+                    'course_code' => $course->course_code,
+                    'room' => $course->room->room_name,
+                    'beacon_uuid' => $course->room->beacon_uuid,
+                    'beacon_major' => $course->room->beacon_major,
+                    'beacon_minor' => $course->room->beacon_minor,
+                    'has_active_session' => $activeSession ? true : false,
+                    'active_session_id' => $activeSession?->id,
+                ];
+            });
+            
+        return response()->json($courses);
+    }
+
+    public function startSession(Request $request) {
+        $request->validate([
+            'course_id' => 'required|exists:courses,id',
+            'duration_hours' => 'required|integer|min:1|max:4',
+        ]);
+
+        $doctor = $request->user();
+
+        $course = Course::where('id', $request->course_id)
+            ->where('doctor_id', $doctor->id)
+            ->first();
+
+        if (!$course) {
+            return response()->json(['error' => 'غير مصرح'], 403);
+        }
+
+        AttendanceSession::where('course_id', $course->id)
+            ->where('is_active', true)
+            ->update(['is_active' => false]);
+
+        $session = AttendanceSession::create([
+            'course_id' => $request->course_id,
+            'session_date' => now()->toDateString(),
+            'start_time' => now()->toTimeString(),
+            'end_time' => now()->addHours($request->duration_hours)->toTimeString(),
+            'is_active' => true,
+            'created_by' => $doctor->id,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'تم بدء الجلسة',
+            'session' => $session,
+            'beacon_info' => [
+                'uuid' => $course->room->beacon_uuid,
+                'major' => $course->room->beacon_major,
+                'minor' => $course->room->beacon_minor,
+            ]
+        ]);
+    }
+
+    public function stopSession($sessionId) {
+        $session = AttendanceSession::findOrFail($sessionId);
+        $session->update(['is_active' => false]);
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'تم إيقاف الجلسة'
+        ]);
+    }
+
+    public function getSessionReport($sessionId) {
+        $session = AttendanceSession::with(['records.student', 'course'])
+            ->findOrFail($sessionId);
+            
+        $records = $session->records->map(function($record) {
+            return [
+                'student_name' => $record->student->name,
+                'student_code' => $record->student->student_code,
+                'check_in_time' => $record->check_in_time->format('H:i:s'),
+                'status' => $record->status,
+                'rssi' => $record->beacon_rssi,
+            ];
+        });
+
+        return response()->json([
+            'session' => [
+                'id' => $session->id,
+                'course' => $session->course->course_name,
+                'date' => $session->session_date,
+                'start_time' => $session->start_time,
+                'end_time' => $session->end_time,
+            ],
+            'total_present' => $session->records->count(),
+            'students' => $records
+        ]);
+    }
+}
+
+-------------------------------------------
+FILE 14: backend/routes/api.php
+-------------------------------------------
+
+<?php
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\StudentController;
+use App\Http\Controllers\Api\DoctorController;
+
+Route::post('/login', [AuthController::class, 'login']);
+
+Route::middleware('auth:sanctum')->group(function () {
+    
+    Route::post('/logout', [AuthController::class, 'logout']);
+    Route::get('/profile', [AuthController::class, 'profile']);
+    
+    Route::middleware('role:student')->prefix('student')->group(function () {
+        Route::get('/courses', [StudentController::class, 'getCourses']);
+        Route::post('/check-in', [StudentController::class, 'checkIn']);
+        Route::get('/attendance-history', [StudentController::class, 'getAttendanceHistory']);
+    });
+    
+    Route::middleware('role:doctor')->prefix('doctor')->group(function () {
+        Route::get('/courses', [DoctorController::class, 'getCourses']);
+        Route::post('/start-session', [DoctorController::class, 'startSession']);
+        Route::post('/stop-session/{sessionId}', [DoctorController::class, 'stopSession']);
+        Route::get('/session-report/{sessionId}', [DoctorController::class, 'getSessionReport']);
+    });
+});
+
+-------------------------------------------
+FILE 15: backend/database/seeders/DatabaseSeeder.php
+-------------------------------------------
+
+<?php
+namespace Database\Seeders;
+use App\Models\User;
+use App\Models\Room;
+use App\Models\Course;
+use Illuminate\Database\Seeder;
+
+class DatabaseSeeder extends Seeder {
+    public function run(): void {
+        User::create([
+            'name' => 'Admin',
+            'email' => 'admin@uni.edu',
+            'password' => bcrypt('password'),
+            'role' => 'admin',
+        ]);
+        
+        $doctor = User::create([
+            'name' => 'Dr. Ahmed',
+            'email' => 'doctor@uni.edu',
+            'password' => bcrypt('password'),
+            'role' => 'doctor',
+        ]);
+        
+        User::create([
+            'name' => 'Student One',
+            'email' => 'student1@uni.edu',
+            'password' => bcrypt('password'),
+            'role' => 'student',
+            'student_code' => '20210001',
+        ]);
+        
+        User::create([
+            'name' => 'Student Two',
+            'email' => 'student2@uni.edu',
+            'password' => bcrypt('password'),
+            'role' => 'student',
+            'student_code' => '20210002',
+        ]);
+        
+        $room = Room::create([
+            'room_name' => 'قاعة 101',
+            'beacon_uuid' => '550e8400-e29b-41d4-a716-446655440000',
+            'beacon_major' => 1,
+            'beacon_minor' => 1,
+        ]);
+        
+        Course::create([
+            'course_name' => 'برمجة متقدمة',
+            'course_code' => 'CS301',
+            'doctor_id' => $doctor->id,
+            'room_id' => $room->id,
+        ]);
+    }
+}
+
+===========================================
+PART 2: MOBILE (Flutter)
+===========================================
+
+-------------------------------------------
+FILE 16: mobile/pubspec.yaml
+-------------------------------------------
+
+name: smart_attendance_app
+description: Smart Attendance System with BLE Beacons
+
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_bloc: ^8.1.3
+  equatable: ^2.0.5
+  dio: ^5.4.0
+  shared_preferences: ^2.2.2
+  flutter_blue_plus: ^1.31.15
+  intl: ^0.19.0
+  fluttertoast: ^8.2.4
+  permission_handler: ^11.1.0
+  cupertino_icons: ^1.0.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+
+flutter:
+  uses-material-design: true
+
+-------------------------------------------
+FILE 17: mobile/lib/main.dart
+-------------------------------------------
+
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'config/theme.dart';
+import 'services/api_service.dart';
+import 'blocs/auth/auth_bloc.dart';
+import 'screens/splash_screen.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await ApiService.init();
+  
+  runApp(const MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocProvider(
+      create: (context) => AuthBloc(),
+      child: MaterialApp(
+        title: 'التحضير الذكي',
+        debugShowCheckedModeBanner: false,
+        theme: AppTheme.lightTheme,
+        home: const SplashScreen(),
+      ),
+    );
+  }
+}
+
+-------------------------------------------
+FILE 18: mobile/lib/config/api_config.dart
+-------------------------------------------
+
+class ApiConfig {
+  static const String baseUrl = 'http://10.0.2.2:8000/api';
+  static const Duration timeout = Duration(seconds: 30);
+}
+
+-------------------------------------------
+FILE 19: mobile/lib/config/theme.dart
+-------------------------------------------
+
+import 'package:flutter/material.dart';
+
+class AppTheme {
+  static const Color primaryColor = Color(0xFF667eea);
+  static const Color secondaryColor = Color(0xFF764ba2);
+  static const Color successColor = Color(0xFF10B981);
+  static const Color dangerColor = Color(0xFFEF4444);
+  
+  static ThemeData get lightTheme {
+    return ThemeData(
+      useMaterial3: true,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: primaryColor,
+        brightness: Brightness.light,
+      ),
+      appBarTheme: const AppBarTheme(
+        centerTitle: true,
+        elevation: 0,
+        backgroundColor: primaryColor,
+        foregroundColor: Colors.white,
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: primaryColor,
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      ),
+      cardTheme: CardTheme(
+        elevation: 4,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+      ),
+    );
+  }
+}
+
+-------------------------------------------
+FILE 20: mobile/lib/models/user.dart
+-------------------------------------------
+
+class User {
+  final int id;
+  final String name;
+  final String email;
+  final String role;
+  final String? studentCode;
+  final String token;
+
+  User({
+    required this.id,
+    required this.name,
+    required this.email,
+    required this.role,
+    this.studentCode,
+    required this.token,
+  });
+
+  factory User.fromJson(Map<String, dynamic> json) {
+    return User(
+      id: json['id'],
+      name: json['name'],
+      email: json['email'],
+      role: json['role'],
+      studentCode: json['student_code'],
+      token: json['token'],
+    );
+  }
+}
+
+-------------------------------------------
+FILE 21: mobile/lib/models/course.dart
+-------------------------------------------
+
+class Course {
+  final int id;
+  final String courseName;
+  final String courseCode;
+  final String doctor;
+  final String room;
+  final bool hasActiveSession;
+  final bool isPresentToday;
+  final String? beaconUuid;
+
+  Course({
+    required this.id,
+    required this.courseName,
+    required this.courseCode,
+    required this.doctor,
+    required this.room,
+    required this.hasActiveSession,
+    required this.isPresentToday,
+    this.beaconUuid,
+  });
+
+  factory Course.fromJson(Map<String, dynamic> json) {
+    return Course(
+      id: json['id'],
+      courseName: json['course_name'],
+      courseCode: json['course_code'],
+      doctor: json['doctor'],
+      room: json['room'],
+      hasActiveSession: json['has_active_session'],
+      isPresentToday: json['is_present_today'],
+      beaconUuid: json['beacon_uuid'],
+    );
+  }
+}
+
+-------------------------------------------
+FILE 22: mobile/lib/services/api_service.dart
+-------------------------------------------
+
+import 'package:dio/dio.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../config/api_config.dart';
+
+class ApiService {
+  static final Dio _dio = Dio(BaseOptions(
+    baseUrl: ApiConfig.baseUrl,
+    connectTimeout: ApiConfig.timeout,
+    receiveTimeout: ApiConfig.timeout,
+    headers: {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+    },
+  ));
+
+  static Future<void> init() async {
+    final token = await getToken();
+    if (token != null) {
+      _dio.options.headers['Authorization'] = 'Bearer $token';
+    }
+  }
+
+  static Future<void> setToken(String token) async {
+    _dio.options.headers['Authorization'] = 'Bearer $token';
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('token', token);
+  }
+
+  static Future<String?> getToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('token');
+  }
+
+  static Future<void> clearToken() async {
+    _dio.options.headers.remove('Authorization');
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('token');
+    await prefs.remove('user_role');
+  }
+
+  static Future<void> saveRole(String role) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('user_role', role);
+  }
+
+  static Future<String?> getRole() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('user_role');
+  }
+
+  static Dio get dio => _dio;
+}
+
+-------------------------------------------
+FILE 23: mobile/lib/services/beacon_service.dart
+-------------------------------------------
+
+import 'dart:async';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:permission_handler/permission_handler.dart';
+
+class BeaconService {
+  static StreamSubscription? _scanSubscription;
+  static bool isScanning = false;
+
+  static Future<bool> requestPermissions() async {
+    Map<Permission, PermissionStatus> statuses = await [
+      Permission.bluetooth,
+      Permission.bluetoothScan,
+      Permission.bluetoothConnect,
+      Permission.locationWhenInUse,
+    ].request();
+
+    return statuses.values.every((status) => status.isGranted);
+  }
+
+  static Future<bool> isBluetoothEnabled() async {
+    return await FlutterBluePlus.isOn;
+  }
+
+  static Stream<List<ScanResult>> startScan({Duration timeout = const Duration(seconds: 10)}) {
+    if (isScanning) {
+      stopScan();
+    }
+
+    isScanning = true;
+    FlutterBluePlus.startScan(timeout: timeout);
+
+    return FlutterBluePlus.scanResults;
+  }
+
+  static Future<void> stopScan() async {
+    await FlutterBluePlus.stopScan();
+    isScanning = false;
+  }
+
+  static Future<ScanResult?> findBeacon({
+    required String uuid,
+    required int major,
+    required int minor,
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    final completer = Completer<ScanResult?>();
+
+    startScan(timeout: timeout).listen((results) {
+      for (var result in results) {
+        final ad = result.advertisementData;
+        
+        if (ad.serviceUuids.isNotEmpty) {
+          for (var serviceUuid in ad.serviceUuids) {
+            if (serviceUuid.str.toLowerCase().contains(uuid.toLowerCase())) {
+              completer.complete(result);
+              stopScan();
+              return;
+            }
+          }
+        }
+      }
+    });
+
+    Timer(timeout, () {
+      if (!completer.isCompleted) {
+        completer.complete(null);
+        stopScan();
+      }
+    });
+
+    return completer.future;
+  }
+}
+
+-------------------------------------------
+FILE 24: mobile/lib/blocs/auth/auth_bloc.dart
+-------------------------------------------
+
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:equatable/equatable.dart';
+import '../../models/user.dart';
+import '../../services/api_service.dart';
+import 'package:dio/dio.dart';
+
+abstract class AuthEvent extends Equatable {
+  @override
+  List<Object> get props => [];
+}
+
+class LoginRequested extends AuthEvent {
+  final String email;
+  final String password;
+  LoginRequested(this.email, this.password);
+  @override
+  List<Object> get props => [email, password];
+}
+
+class LogoutRequested extends AuthEvent {}
+
+class CheckAuthStatus extends AuthEvent {}
+
+abstract class AuthState extends Equatable {
+  @override
+  List<Object> get props => [];
+}
+
+class AuthInitial extends AuthState {}
+class AuthLoading extends AuthState {}
+class AuthAuthenticated extends AuthState {
+  final User user;
+  AuthAuthenticated(this.user);
+  @override
+  List<Object> get props => [user];
+}
+class AuthUnauthenticated extends AuthState {}
+class AuthError extends AuthState {
+  final String message;
+  AuthError(this.message);
+  @override
+  List<Object> get props => [message];
+}
+
+class AuthBloc extends Bloc<AuthEvent, AuthState> {
+  AuthBloc() : super(AuthInitial()) {
+    on<LoginRequested>(_onLoginRequested);
+    on<LogoutRequested>(_onLogoutRequested);
+    on<CheckAuthStatus>(_onCheckAuthStatus);
+  }
+
+  Future<void> _onLoginRequested(LoginRequested event, Emitter<AuthState> emit) async {
+    emit(AuthLoading());
+    
+    try {
+      final response = await ApiService.dio.post('/login', data: {
+        'email': event.email,
+        'password': event.password,
+      });
+
+      final user = User.fromJson(response.data);
+      await ApiService.setToken(user.token);
+      await ApiService.saveRole(user.role);
+      
+      emit(AuthAuthenticated(user));
+    } on DioException catch (e) {
+      final message = e.response?.data['message'] ?? 'خطأ في الاتصال';
+      emit(AuthError(message));
+    }
+  }
+
+  Future<void> _onLogoutRequested(LogoutRequested event, Emitter<AuthState> emit) async {
+    try {
+      await ApiService.dio.post('/logout');
+    } catch (_) {}
+    
+    await ApiService.clearToken();
+    emit(AuthUnauthenticated());
+  }
+
+  Future<void> _onCheckAuthStatus(CheckAuthStatus event, Emitter<AuthState> emit) async {
+    final token = await ApiService.getToken();
+    final role = await ApiService.getRole();
+    
+    if (token != null && role != null) {
+      emit(AuthAuthenticated(User(
+        id: 0, name: '', email: '', role: role, token: token
+      )));
+    } else {
+      emit(AuthUnauthenticated());
+    }
+  }
+}
+
+-------------------------------------------
+FILE 25: mobile/lib/screens/splash_screen.dart
+-------------------------------------------
+
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import '../blocs/auth/auth_bloc.dart';
+import 'login_screen.dart';
+import 'student/student_home.dart';
+import 'doctor/doctor_home.dart';
+
+class SplashScreen extends StatefulWidget {
+  const SplashScreen({super.key});
+
+  @override
+  State<SplashScreen> createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<SplashScreen> {
+  @override
+  void initState() {
+    super.initState();
+    context.read<AuthBloc>().add(CheckAuthStatus());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocListener<AuthBloc, AuthState>(
+      listener: (context, state) {
+        if (state is AuthAuthenticated) {
+          if (state.user.role == 'student') {
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(builder: (_) => const StudentHome()),
+            );
+          } else if (state.user.role == 'doctor') {
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(builder: (_) => const DoctorHome()),
+            );
+          }
+        } else if (state is AuthUnauthenticated) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const LoginScreen()),
+          );
+        }
+      },
+      child: Scaffold(
+        body: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Color(0xFF667eea), Color(0xFF764ba2)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+          child: const Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.school, size: 100, color: Colors.white),
+                SizedBox(height: 20),
+                Text(
+                  'التحضير الذكي',
+                  style: TextStyle(
+                    fontSize: 32,
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                SizedBox(height: 30),
+                CircularProgressIndicator(color: Colors.white),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+-------------------------------------------
+FILE 26: mobile/lib/screens/login_screen.dart
+-------------------------------------------
+
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import '../blocs/auth/auth_bloc.dart';
+
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key});
+
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  bool _obscurePassword = true;
+
+  void _login() {
+    context.read<AuthBloc>().add(LoginRequested(
+      _emailController.text.trim(),
+      _passwordController.text,
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFF667eea), Color(0xFF764ba2)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: BlocConsumer<AuthBloc, AuthState>(
+                listener: (context, state) {
+                  if (state is AuthError) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(state.message), backgroundColor: Colors.red),
+                    );
+                  }
+                },
+                builder: (context, state) {
+                  return Card(
+                    elevation: 8,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    child: Padding(
+                      padding: const EdgeInsets.all(32),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.fingerprint, size: 80, color: Color(0xFF667eea)),
+                          const SizedBox(height: 16),
+                          const Text('تسجيل الدخول', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 24),
+                          TextField(
+                            controller: _emailController,
+                            decoration: InputDecoration(
+                              labelText: 'البريد الإلكتروني',
+                              prefixIcon: const Icon(Icons.email),
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                            keyboardType: TextInputType.emailAddress,
+                          ),
+                          const SizedBox(height: 16),
+                          TextField(
+                            controller: _passwordController,
+                            obscureText: _obscurePassword,
+                            decoration: InputDecoration(
+                              labelText: 'كلمة المرور',
+                              prefixIcon: const Icon(Icons.lock),
+                              suffixIcon: IconButton(
+                                icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
+                                onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                              ),
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 50,
+                            child: ElevatedButton(
+                              onPressed: state is AuthLoading ? null : _login,
+                              child: state is AuthLoading
+                                  ? const CircularProgressIndicator()
+                                  : const Text('دخول', style: TextStyle(fontSize: 18)),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          const Text(
+                            'بيانات تجريبية:\nstudent1@uni.edu / password\ndoctor@uni.edu / password',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.grey, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+-------------------------------------------
+FILE 27: mobile/lib/screens/student/student_home.dart
+-------------------------------------------
+
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../blocs/auth/auth_bloc.dart';
+import 'attendance_screen.dart';
+
+class StudentHome extends StatelessWidget {
+  const StudentHome({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('لوحة الطالب'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () => context.read<AuthBloc>().add(LogoutRequested()),
+          ),
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            Card(
+              child: ListTile(
+                contentPadding: const EdgeInsets.all(20),
+                leading: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.bluetooth_searching, color: Colors.blue, size: 32),
+                ),
+                title: const Text('تسجيل الحضور', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                subtitle: const Text('استخدم البلوتوث لتأكيد حضورك'),
+                trailing: const Icon(Icons.arrow_forward_ios),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const AttendanceScreen()),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+-------------------------------------------
+FILE 28: mobile/lib/screens/student/attendance_screen.dart
+-------------------------------------------
+
+import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:fluttertoast/fluttertoast.dart';
+import '../../services/api_service.dart';
+import '../../services/beacon_service.dart';
+import 'package:dio/dio.dart';
+
+class AttendanceScreen extends StatefulWidget {
+  const AttendanceScreen({super.key});
+
+  @override
+  State<AttendanceScreen> createState() => _AttendanceScreenState();
+}
+
+class _AttendanceScreenState extends State<AttendanceScreen> {
+  bool _isLoading = true;
+  bool _isScanning = false;
+  List<dynamic> _courses = [];
+  String? _selectedCourseId;
+  String _status = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCourses();
+    BeaconService.requestPermissions();
+  }
+
+  Future<void> _loadCourses() async {
+    try {
+      final response = await ApiService.dio.get('/student/courses');
+      setState(() {
+        _courses = response.data;
+        _isLoading = false;
+      });
+    } on DioException catch (e) {
+      Fluttertoast.showToast(msg: 'خطأ في تحميل المواد');
+      setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _checkIn() async {
+    if (_selectedCourseId == null) {
+      Fluttertoast.showToast(msg: 'اختر مادة أولاً');
+      return;
+    }
+
+    final course = _courses.firstWhere((c) => c['id'].toString() == _selectedCourseId);
+    
+    if (!course['has_active_session']) {
+      Fluttertoast.showToast(msg: 'لا يوجد جلسة حضور نشطة');
+      return;
+    }
+
+    setState(() {
+      _isScanning = true;
+      _status = 'جاري البحث عن Beacon...';
+    });
+
+    try {
+      final beacon = await BeaconService.findBeacon(
+        uuid: course['beacon_uuid'],
+        major: 1,
+        minor: 1,
+        timeout: const Duration(seconds: 15),
+      );
+
+      if (beacon == null) {
+        setState(() {
+          _status = 'لم يتم العثور على Beacon';
+          _isScanning = false;
+        });
+        return;
+      }
+
+      setState(() => _status = 'جاري التسجيل...');
+
+      final response = await ApiService.dio.post('/student/check-in', data: {
+        'beacon_uuid': course['beacon_uuid'],
+        'beacon_major': 1,
+        'beacon_minor': 1,
+        'rssi': beacon.rssi,
+        'course_id': int.parse(_selectedCourseId!),
+      });
+
+      setState(() {
+        _status = 'تم التسجيل بنجاح! ✅';
+        _isScanning = false;
+      });
+
+      Fluttertoast.showToast(msg: response.data['message'], backgroundColor: Colors.green);
+      _loadCourses();
+
+    } on DioException catch (e) {
+      setState(() {
+        _status = e.response?.data['error'] ?? 'فشل التسجيل';
+        _isScanning = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('تسجيل الحضور')),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  DropdownButtonFormField<String>(
+                    value: _selectedCourseId,
+                    hint: const Text('اختر المادة'),
+                    items: _courses.map((course) {
+                      return DropdownMenuItem(
+                        value: course['id'].toString(),
+                        child: Text(course['course_name']),
+                      );
+                    }).toList(),
+                    onChanged: (value) => setState(() => _selectedCourseId = value),
+                  ),
+                  const SizedBox(height: 24),
+                  if (_status.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: _status.contains('✅') ? Colors.green.withOpacity(0.1) : Colors.blue.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(_status),
+                    ),
+                  const Spacer(),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 56,
+                    child: ElevatedButton.icon(
+                      onPressed: _isScanning ? null : _checkIn,
+                      icon: _isScanning 
+                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                        : const Icon(Icons.fingerprint),
+                      label: Text(_isScanning ? 'جاري التسجيل...' : 'تسجيل الحضور الآن'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+    );
+  }
+}
+
+-------------------------------------------
+FILE 29: mobile/lib/screens/doctor/doctor_home.dart
+-------------------------------------------
+
+import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:dio/dio.dart';
+import '../../blocs/auth/auth_bloc.dart';
+import '../../services/api_service.dart';
+
+class DoctorHome extends StatefulWidget {
+  const DoctorHome({super.key});
+
+  @override
+  State<DoctorHome> createState() => _DoctorHomeState();
+}
+
+class _DoctorHomeState extends State<DoctorHome> {
+  List<dynamic> _courses = [];
+  bool _isLoading = true;
+  Timer? _refreshTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCourses();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) => _loadCourses());
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadCourses() async {
+    try {
+      final response = await ApiService.dio.get('/doctor/courses');
+      setState(() {
+        _courses = response.data;
+        _isLoading = false;
+      });
+    } on DioException catch (e) {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _toggleSession(dynamic course) async {
+    if (course['has_active_session']) {
+      try {
+        await ApiService.dio.post('/doctor/stop-session/${course['active_session_id']}');
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم إيقاف الجلسة')));
+        _loadCourses();
+      } on DioException catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.response?.data['error'] ?? 'خطأ')));
+      }
+    } else {
+      _showDurationDialog(course['id']);
+    }
+  }
+
+  void _showDurationDialog(int courseId) {
+    int selectedDuration = 2;
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('بدء جلسة حضور'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('اختر المدة:'),
+            StatefulBuilder(
+              builder: (context, setState) => Column(
+                children: [1, 2, 3, 4].map((hours) => RadioListTile<int>(
+                  title: Text('$hours ساعة'),
+                  value: hours,
+                  groupValue: selectedDuration,
+                  onChanged: (value) => setState(() => selectedDuration = value!),
+                )).toList(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await _startSession(courseId, selectedDuration);
+            },
+            child: const Text('بدء'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _startSession(int courseId, int duration) async {
+    try {
+      final response = await ApiService.dio.post('/doctor/start-session', data: {
+        'course_id': courseId,
+        'duration_hours': duration,
+      });
+      
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم بدء الجلسة')));
+      _loadCourses();
+      
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('معلومات الـ Beacon'),
+          content: Text('UUID: ${response.data['beacon_info']['uuid']}'),
+          actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('حسناً'))],
+        ),
+      );
+      
+    } on DioException catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.response?.data['error'] ?? 'خطأ')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('لوحة المحاضر'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () => context.read<AuthBloc>().add(LogoutRequested()),
+          ),
+        ],
+      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
+              onRefresh: _loadCourses,
+              child: ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: _courses.length,
+                itemBuilder: (context, index) {
+                  final course = _courses[index];
+                  final bool isActive = course['has_active_session'];
+                  
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    child: Column(
+                      children: [
+                        ListTile(
+                          contentPadding: const EdgeInsets.all(16),
+                          title: Text(course['course_name'], style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('كود: ${course['course_code']}'),
+                              Text('القاعة: ${course['room']}'),
+                              Container(
+                                margin: const EdgeInsets.only(top: 8),
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: isActive ? Colors.green.withOpacity(0.1) : Colors.grey.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(isActive ? 'جلسة نشطة ✅' : 'لا توجد جلسة'),
+                              ),
+                            ],
+                          ),
+                        ),
+                        ButtonBar(
+                          children: [
+                            ElevatedButton.icon(
+                              onPressed: () => _toggleSession(course),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: isActive ? Colors.red : Colors.green,
+                              ),
+                              icon: Icon(isActive ? Icons.stop : Icons.play_arrow),
+                              label: Text(isActive ? 'إيقاف' : 'بدء جلسة'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+    );
+  }
+}
+
+-------------------------------------------
+FILE 30: mobile/android/app/src/main/AndroidManifest.xml
+-------------------------------------------
+
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="التحضير الذكي"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher">
+        
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+            
+            <meta-data
+              android:name="io.flutter.embedding.android.NormalTheme"
+              android:resource="@style/NormalTheme"
+              />
+              
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+    </application>
+</manifest>
+
+===========================================
+END OF FILE
+===========================================
